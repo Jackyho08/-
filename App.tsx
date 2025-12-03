@@ -23,7 +23,7 @@ const App: React.FC = () => {
     starDensity: 3000,
     skyColor: '#000510', // Midnight Blue
     // Header Defaults
-    headerText: "KaiXuan's Christmas Tree",
+    headerText: "Jackyho's Christmas Tree",
     headerFont: '"Mountains of Christmas", serif',
     headerColor: '#d4af37',
   });

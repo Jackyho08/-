@@ -69,7 +69,7 @@ export interface ThreeElements {
 
   // Additional elements just in case
   instancedMesh: any;
-  line: any;
+  // line: any; // Removed to avoid conflict with SVG line
   lineLoop: any;
   lineSegments: any;
   texture: any;
@@ -107,7 +107,7 @@ declare global {
         shaderMaterial: any;
         pointsMaterial: any;
         instancedMesh: any;
-        line: any;
+        // line: any; // Removed to avoid conflict with SVG line
         lineLoop: any;
         lineSegments: any;
         texture: any;
@@ -145,7 +145,7 @@ declare module 'react' {
         shaderMaterial: any;
         pointsMaterial: any;
         instancedMesh: any;
-        line: any;
+        // line: any; // Removed to avoid conflict with SVG line
         lineLoop: any;
         lineSegments: any;
         texture: any;

@@ -1,4 +1,3 @@
-
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame, ThreeEvent } from '@react-three/fiber';
@@ -15,6 +14,19 @@ interface ChristmasTreeProps {
   starColor: string;
 }
 
+// Simple hash function to generate a stable seed from the URL string
+// This ensures that even if photos are deleted/reordered, their positions
+// on the tree (which depend on the seed) remain constant for the same photo.
+const getStableRandom = (str: string) => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash);
+};
+
 export const ChristmasTree: React.FC<ChristmasTreeProps> = ({ 
   lightsOn, photoUrls, ribbonAnimationTrigger, isExperienceActive, treeColor, ribbonColor, starColor 
 }) => {
@@ -26,8 +38,8 @@ export const ChristmasTree: React.FC<ChristmasTreeProps> = ({
   // 0.0 = Hidden/Bottom, 1.0 = Fully Grown/Visible
   const currentGrowth = useRef(0.0); 
   
-  // Photo Interaction State
-  const [activePhotoIndex, setActivePhotoIndex] = useState<number | null>(null);
+  // Photo Interaction State - Track by URL instead of index for stability
+  const [activePhotoUrl, setActivePhotoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     // Force reset growth if manually triggered (though main state drives it now)
@@ -188,159 +200,6 @@ export const ChristmasTree: React.FC<ChristmasTreeProps> = ({
     return geo;
   }, [treeColor, starColor]);
 
-  // --- RIBBON PARTICLE GENERATION ---
-  const ribbonParticleGeometry = useMemo(() => {
-    const ribbonLoops = 5.5; 
-    const ribbonStartY = 1.0; 
-    const ribbonEndY = treeHeight - 1.2; 
-    const angleOffset = Math.PI / 4;
-    
-    // Increased density for ribbon
-    const segments = 2000;
-    const particlesPerSegment = 12;
-    
-    const positions = [];
-    const sizes = [];
-    const phases = [];
-    const progress = []; 
-
-    for (let i = 0; i <= segments; i++) {
-        const t = i / segments;
-        
-        const y = THREE.MathUtils.lerp(ribbonStartY, ribbonEndY, t);
-        const hNorm = y / treeHeight;
-        const coneRadius = 5.0 * (1.0 - hNorm);
-        
-        const loopsDone = t * ribbonLoops; 
-        // Reverse winding direction (Clockwise)
-        const angle = -loopsDone * Math.PI * 2 + angleOffset;
-        
-        const drapeFreq = 12.0; 
-        const drapeAmp = 0.15;
-        const yDrape = -Math.abs(Math.sin(loopsDone * Math.PI * drapeFreq)) * drapeAmp;
-
-        const rWave = 0.05 * Math.sin(loopsDone * Math.PI * 6.0);
-        const centerR = coneRadius + 0.05 + rWave;
-        
-        if (isNaN(centerR)) continue;
-
-        const centerX = centerR * Math.cos(angle);
-        const centerZ = centerR * Math.sin(angle);
-        const centerY = y + yDrape;
-
-        for (let j = 0; j < particlesPerSegment; j++) {
-            const spread = 0.15; 
-            const rndR = (Math.random() - 0.5) * spread;
-            const rndY = (Math.random() - 0.5) * spread * 0.5;
-            const rndAngle = (Math.random() - 0.5) * 0.2; 
-            
-            const px = (centerR + rndR) * Math.cos(angle + rndAngle);
-            const pz = (centerR + rndR) * Math.sin(angle + rndAngle);
-            const py = centerY + rndY;
-
-            positions.push(px, py, pz);
-            sizes.push(2.0 + Math.random() * 4.0);
-            phases.push(Math.random() * 10.0);
-            progress.push(t); 
-        }
-    }
-
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
-    geo.setAttribute('aPhase', new THREE.Float32BufferAttribute(phases, 1));
-    geo.setAttribute('aProgress', new THREE.Float32BufferAttribute(progress, 1));
-    return geo;
-  }, []);
-
-  // --- TREE MATERIAL ---
-  const material = useMemo(() => new THREE.ShaderMaterial({
-    uniforms: {
-      uTime: { value: 0 },
-      uOpacity: { value: 1.0 },
-      uGrowth: { value: 1.0 }, // New Uniform
-    },
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    vertexShader: `
-      uniform float uTime;
-      uniform float uGrowth; // 0..1
-      
-      attribute vec3 color;
-      attribute float size;
-      attribute float aRandom;
-      attribute float aPhase;
-      attribute float aType;
-      attribute float aHeight; // 0..1
-      
-      varying vec3 vColor;
-      varying float vAlpha;
-      
-      void main() {
-        vColor = color;
-        vec3 pos = position;
-        
-        // Growth Logic: 
-        // We mask particles above the growth line. 
-        // Add smooth edge fade
-        float growthEdge = smoothstep(uGrowth + 0.05, uGrowth - 0.05, aHeight);
-        // If not started (uGrowth=0), hide all. If full (uGrowth=1), show all.
-        if (aHeight > uGrowth) growthEdge = 0.0;
-        
-        if (aType < 1.5) { 
-           float sway = sin(uTime * 1.0 + pos.y * 0.3) * 0.06 * (pos.y / 12.0);
-           pos.x += sway;
-           pos.z += sway * 0.5;
-        }
-        
-        float scale = 1.0;
-        
-        if (aType > 1.5) {
-           float blink = sin(uTime * 3.0 + aPhase * 15.0);
-           scale = 1.0 + blink * 0.4;
-           float brightness = max(0.0, blink);
-           vColor = mix(color, vec3(1.0, 1.0, 0.9), brightness * 0.6);
-           vAlpha = 0.8 + 0.2 * blink;
-        }
-        else {
-           scale = 1.0 + sin(uTime * 2.0 + aPhase) * 0.1;
-           vAlpha = 0.85 + 0.15 * sin(uTime * 5.0 + aRandom * 10.0);
-        }
-        
-        // Apply Growth Mask
-        vAlpha *= growthEdge;
-
-        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-        gl_Position = projectionMatrix * mvPosition;
-        
-        float distFactor = 25.0 / max(1.0, -mvPosition.z);
-        
-        // Safety: Clamp point size
-        gl_PointSize = min(300.0, size * scale * distFactor);
-      }
-    `,
-    fragmentShader: `
-      uniform float uOpacity;
-      varying vec3 vColor;
-      varying float vAlpha;
-      
-      void main() {
-        if (vAlpha < 0.01) discard;
-        vec2 uv = gl_PointCoord.xy;
-        float dist = length(uv - 0.5);
-        if (dist > 0.5) discard;
-        
-        // Fix NaN artifact: Clamp base to 0.0 before pow
-        float glow = max(0.0, 1.0 - (dist * 2.0));
-        glow = pow(max(0.0, glow), 2.0);
-        
-        gl_FragColor = vec4(vColor, vAlpha * glow * uOpacity);
-        gl_FragColor = clamp(gl_FragColor, 0.0, 1.0);
-      }
-    `,
-  }), []);
-
   // --- RIBBON PARTICLE MATERIAL ---
   const ribbonMaterial = useMemo(() => new THREE.ShaderMaterial({
     uniforms: {
@@ -411,6 +270,98 @@ export const ChristmasTree: React.FC<ChristmasTreeProps> = ({
     `
   }), []);
 
+  // --- TREE MATERIAL ---
+  const material = useMemo(() => new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uGrowth: { value: 0.0 },
+      uOpacity: { value: 1.0 }
+    },
+    transparent: true,
+    depthWrite: false,
+    vertexShader: `
+      uniform float uTime;
+      uniform float uGrowth;
+      attribute float size;
+      attribute float aRandom;
+      attribute float aPhase;
+      attribute float aType; 
+      attribute float aHeight;
+      
+      varying vec3 vColor;
+      varying float vAlpha;
+      
+      void main() {
+        vColor = color;
+        
+        float visible = step(aHeight, uGrowth);
+        
+        vec3 pos = position;
+        pos.x += sin(uTime + aPhase) * 0.05 * aHeight;
+        pos.z += cos(uTime + aPhase) * 0.05 * aHeight;
+
+        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        
+        float pSize = size;
+        if (aType > 1.5) {
+           pSize *= (1.0 + 0.3 * sin(uTime * 5.0 + aPhase));
+        }
+
+        gl_PointSize = pSize * (20.0 / -mvPosition.z) * visible;
+        vAlpha = visible;
+      }
+    `,
+    fragmentShader: `
+      uniform float uOpacity;
+      varying vec3 vColor;
+      varying float vAlpha;
+      
+      void main() {
+        if (vAlpha < 0.1) discard;
+        vec2 uv = gl_PointCoord.xy - 0.5;
+        if (length(uv) > 0.5) discard;
+        gl_FragColor = vec4(vColor, uOpacity);
+      }
+    `,
+    vertexColors: true
+  }), []);
+
+  // --- RIBBON GEOMETRY ---
+  const ribbonParticleGeometry = useMemo(() => {
+     const geo = new THREE.BufferGeometry();
+     const count = 3000;
+     const positions = [];
+     const sizes = [];
+     const phases = [];
+     const progresses = [];
+     
+     for (let i=0; i<count; i++) {
+        const p = i / count;
+        progresses.push(p);
+        
+        const angle = p * 30.0;
+        const radius = 5.0 * (1.0 - p) + 0.5;
+        const y = p * 12.0;
+        
+        positions.push(
+            Math.cos(angle)*radius + (Math.random()-0.5)*0.3, 
+            y + (Math.random()-0.5)*0.3, 
+            Math.sin(angle)*radius + (Math.random()-0.5)*0.3
+        );
+        
+        sizes.push(Math.random() * 3.0 + 2.0);
+        phases.push(Math.random() * Math.PI * 2);
+     }
+     
+     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+     geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+     geo.setAttribute('aPhase', new THREE.Float32BufferAttribute(phases, 1));
+     geo.setAttribute('aProgress', new THREE.Float32BufferAttribute(progresses, 1));
+     
+     return geo;
+  }, []);
+
   useEffect(() => {
     ribbonMaterial.uniforms.uRibbonColor.value.set(ribbonColor);
   }, [ribbonColor, ribbonMaterial]);
@@ -445,10 +396,14 @@ export const ChristmasTree: React.FC<ChristmasTreeProps> = ({
 
   // --- PHOTO PLACEMENT ---
   const photoPositions = useMemo(() => {
-    return photoUrls.map((url, i) => {
-        const seed = i * 999.99;
+    return photoUrls.map((url) => {
+        // STABILITY FIX: Use stable hash from URL as seed
+        const seed = getStableRandom(url);
+        
         const rand = (n: number) => {
-            const x = Math.sin(seed + n) * 43758.5453;
+            // Using a seeded sine pseudo-random generator
+            // Multiplying by large prime-ish numbers prevents pattern overlap
+            const x = Math.sin(seed + n * 12.9898) * 43758.5453;
             return x - Math.floor(x);
         };
 
@@ -488,7 +443,7 @@ export const ChristmasTree: React.FC<ChristmasTreeProps> = ({
 
   const dismissActivePhoto = (e: ThreeEvent<MouseEvent>) => {
       e.stopPropagation();
-      setActivePhotoIndex(null);
+      setActivePhotoUrl(null);
   }
 
   return (
@@ -506,16 +461,16 @@ export const ChristmasTree: React.FC<ChristmasTreeProps> = ({
         <points ref={ribbonParticlesRef} geometry={ribbonParticleGeometry} material={ribbonMaterial} />
       )}
 
-      {photoPositions.map((p, i) => (
+      {photoPositions.map((p) => (
          <PhotoPatch 
-           key={i}
+           key={p.url} // Use URL as key for component stability during list changes
            url={p.url}
            position={p.pos}
            rotation={p.rot}
            size={[0.45, 0.525]} 
            opacity={lightsOn ? 1.0 : 0.0}
-           isActive={activePhotoIndex === i}
-           onClick={() => setActivePhotoIndex(prev => prev === i ? null : i)}
+           isActive={activePhotoUrl === p.url}
+           onClick={() => setActivePhotoUrl(prev => prev === p.url ? null : p.url)}
            isVisible={isExperienceActive}
            revealDelay={p.hNorm} // Pass height for delayed reveal effect
          />
